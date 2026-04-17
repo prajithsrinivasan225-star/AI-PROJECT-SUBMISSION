@@ -1,0 +1,46 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the application",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The user's unique ID" },
+        "name": { "type": "string", "description": "The user's display name" },
+        "email": { "type": "string", "format": "email", "description": "The user's email address" },
+        "role": { "type": "string", "enum": ["user", "admin"], "description": "The user's role" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the user was created" }
+      },
+      "required": ["uid", "name", "email", "role", "createdAt"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "A service booking request",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "The ID of the user who made the booking" },
+        "mechanicId": { "type": "number", "description": "The ID of the mechanic" },
+        "mechanicName": { "type": "string", "description": "The name of the mechanic" },
+        "date": { "type": "string", "format": "date-time", "description": "The date and time of the booking" },
+        "status": { "type": "string", "enum": ["active", "completed", "cancelled"], "description": "The status of the booking" },
+        "location": {
+          "type": "array",
+          "items": { "type": "number" },
+          "description": "The [lat, lng] location of the user"
+        },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the booking was created" }
+      },
+      "required": ["userId", "mechanicId", "mechanicName", "date", "status", "location", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Stores user profiles"
+    },
+    "/bookings/{bookingId}": {
+      "schema": { "$ref": "#/entities/Booking" },
+      "description": "Stores service bookings"
+    }
+  }
+}

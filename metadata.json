@@ -1,0 +1,7 @@
+{
+  "name": "Remix: MechRescue - On-Demand Mechanic",
+  "description": "Location-based app for booking vehicle mechanics to your location with live tracking.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}

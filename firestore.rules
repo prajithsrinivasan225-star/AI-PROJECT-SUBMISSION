@@ -1,0 +1,173 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required) - User's unique ID
+    //   - name: string (required) - User's display name
+    //   - email: string (required) - User's email address
+    //   - role: string (required) - User's role ('user', 'mechanic', or 'admin')
+    //   - createdAt: timestamp (required) - Creation timestamp
+    //   - location: list (optional) - [lat, lng]
+    //   - isAvailable: boolean (optional) - Mechanic availability
+    //   - specialty: string (optional)
+    //   - rating: number (optional)
+    //   - reviews: number (optional)
+    //   - eta: string (optional)
+    //   - price: string (optional)
+    //   - image: string (optional)
+    //   - phone: string (optional)
+    //
+    // Collection: bookings
+    // Document ID: {bookingId}
+    // Fields:
+    //   - userId: string (required) - ID of the user who made the booking
+    //   - mechanicId: string (required) - ID of the mechanic
+    //   - mechanicName: string (required) - Name of the mechanic
+    //   - mechanicPhone: string (optional)
+    //   - mechanicPrice: string (optional)
+    //   - mechanicEta: string (optional)
+    //   - mechanicImage: string (optional)
+    //   - userName: string (optional)
+    //   - userPhone: string (optional)
+    //   - date: string (required) - ISO string date
+    //   - status: string (required) - 'active', 'en_route', 'arrived', 'completed', 'cancelled'
+    //   - location: list (required) - [lat, lng]
+    //   - mechanicLocation: list (optional) - [lat, lng]
+    //   - createdAt: timestamp (required) - Creation timestamp
+    //
+    // Collection: bookings/{bookingId}/messages
+    // Document ID: {messageId}
+    // Fields:
+    //   - text: string (required) - Message content
+    //   - senderId: string (required) - ID of the sender
+    //   - createdAt: timestamp (required) - Creation timestamp
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+        (request.auth.token.email == "prajithsrinivasan225@gmail.com" && request.auth.token.email_verified == true) ||
+        (request.auth.token.email == "25cb039@rmkec.ac.in" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'name', 'email', 'role', 'createdAt']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             isValidEmail(data.email) &&
+             data.role in ['user', 'mechanic', 'admin'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidBooking(data) {
+      return data.keys().hasAll(['userId', 'mechanicId', 'mechanicName', 'date', 'status', 'location', 'createdAt']) &&
+             data.userId is string && data.userId.size() > 0 &&
+             data.mechanicId is string && data.mechanicId.size() > 0 &&
+             data.mechanicName is string && data.mechanicName.size() > 0 && data.mechanicName.size() < 100 &&
+             (!('mechanicPhone' in data) || data.mechanicPhone is string) &&
+             (!('mechanicPrice' in data) || data.mechanicPrice is string) &&
+             (!('mechanicEta' in data) || data.mechanicEta is string) &&
+             (!('mechanicImage' in data) || data.mechanicImage is string) &&
+             (!('userName' in data) || data.userName is string) &&
+             (!('userPhone' in data) || data.userPhone is string) &&
+             (!('vehicleInfo' in data) || data.vehicleInfo is string) &&
+             (!('issueDescription' in data) || data.issueDescription is string) &&
+             (!('paid' in data) || data.paid is bool) &&
+             data.date is string && data.date.size() > 0 && data.date.size() < 50 &&
+             data.status in ['active', 'en_route', 'arrived', 'payment_pending', 'completed', 'cancelled'] &&
+             data.location is list && data.location.size() == 2 &&
+             data.location[0] is number && data.location[1] is number &&
+             (!('mechanicLocation' in data) || (data.mechanicLocation is list && data.mechanicLocation.size() == 2 && data.mechanicLocation[0] is number && data.mechanicLocation[1] is number)) &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidMessage(data) {
+      return data.keys().hasAll(['text', 'senderId', 'createdAt']) &&
+             data.text is string && data.text.size() > 0 && data.text.size() < 1000 &&
+             data.senderId is string && data.senderId.size() > 0 &&
+             data.createdAt is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow get: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow list: if isAuthenticated();
+      allow create: if isAuthenticated() && 
+                       isValidUser(request.resource.data) && 
+                       (
+                         (isOwner(userId) && request.resource.data.uid == userId && (request.resource.data.role in ['user', 'mechanic'])) || 
+                         isAdmin()
+                       );
+      allow update: if isAuthenticated() && 
+                       isOwner(userId) && 
+                       isValidUser(request.resource.data) && 
+                       request.resource.data.uid == resource.data.uid &&
+                       request.resource.data.createdAt == resource.data.createdAt &&
+                       ((request.resource.data.role == resource.data.role) || isAdmin() || request.resource.data.role == 'mechanic' || request.resource.data.role == 'user');
+      allow delete: if isAdmin();
+    }
+
+    match /bookings/{bookingId} {
+      allow get: if isAuthenticated() && (request.auth.uid == resource.data.userId || request.auth.uid == resource.data.mechanicId || isAdmin());
+      allow list: if isAuthenticated();
+      allow create: if isAuthenticated() && 
+                       isValidBooking(request.resource.data) && 
+                       request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && 
+                       isValidBooking(request.resource.data) && 
+                       (resource.data.userId == request.auth.uid || resource.data.mechanicId == request.auth.uid) &&
+                       request.resource.data.userId == resource.data.userId &&
+                       request.resource.data.createdAt == resource.data.createdAt &&
+                       request.resource.data.mechanicId == resource.data.mechanicId;
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && (
+          request.auth.uid == get(/databases/$(database)/documents/bookings/$(bookingId)).data.userId ||
+          request.auth.uid == get(/databases/$(database)/documents/bookings/$(bookingId)).data.mechanicId ||
+          isAdmin()
+        );
+        allow create: if isAuthenticated() &&
+          isValidMessage(request.resource.data) &&
+          request.resource.data.senderId == request.auth.uid &&
+          (
+            request.auth.uid == get(/databases/$(database)/documents/bookings/$(bookingId)).data.userId ||
+            request.auth.uid == get(/databases/$(database)/documents/bookings/$(bookingId)).data.mechanicId
+          );
+        allow update: if false;
+        allow delete: if isAdmin();
+      }
+    }
+  }
+}
