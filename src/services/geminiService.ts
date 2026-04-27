@@ -22,6 +22,7 @@ export async function diagnoseIssue(issueDescription: string, vehicleInfo: strin
     
     Analyze the issue and provide a structured diagnosis.
     Be professional, helpful, and prioritize safety.
+    CRITICAL: All monetary values and costs MUST be in Indian Rupees (INR) using the ₹ symbol. NEVER use dollars ($).
   `;
 
   const response = await ai.models.generateContent({
@@ -43,7 +44,7 @@ export async function diagnoseIssue(issueDescription: string, vehicleInfo: strin
           },
           estimatedCost: {
             type: Type.STRING,
-            description: "A rough estimate range for the repair (e.g., $50 - $150)."
+            description: "A rough estimate range for the repair in Indian Rupees only. Example: ₹500 - ₹1500. DO NOT USE DOLLARS."
           },
           recommendedCategory: {
             type: Type.STRING,

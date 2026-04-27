@@ -4,9 +4,9 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
 import L from 'leaflet';
-import { Wrench, Star, Phone, MapPin, Clock, ArrowLeft, CheckCircle2, Navigation, ShieldCheck, History, Map as MapIcon, LogOut, MessageCircle, Send, X, AlertTriangle, Calendar, Users, Car, Bike, Sparkles, Bot, User as UserIcon, DollarSign, Search } from 'lucide-react';
+import { Wrench, Star, Phone, MapPin, Clock, ArrowLeft, CheckCircle2, Navigation, ShieldCheck, History, Map as MapIcon, LogOut, MessageCircle, Send, X, AlertTriangle, Calendar, Users, Car, Bike, Sparkles, Bot, User as UserIcon, IndianRupee, Search, Zap, Disc, Lock, Truck, ShieldAlert, Home, Building } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { auth, db, signInWithGoogle, logOut } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
@@ -135,6 +135,11 @@ const getMechanicIcon = (category?: string) => {
 
 const userIcon = createIcon('#3b82f6', userIconHtml); // Blue for user
 
+const formatDisplayPrice = (price: string) => {
+  if (!price) return '';
+  return price.replace(/\$/g, '₹');
+};
+
 import { diagnoseIssue, DiagnosticResult, ai as geminiAi } from './services/geminiService';
 
 // --- Constants ---
@@ -195,10 +200,12 @@ export default function App() {
   const [vehicleInfo, setVehicleInfo] = useState('');
   const [issueDescription, setIssueDescription] = useState('');
   const [serviceType, setServiceType] = useState('general_maintenance');
+  const [serviceLocation, setServiceLocation] = useState('roadside');
+  const [additionalNotes, setAdditionalNotes] = useState('');
   const [userPhone, setUserPhone] = useState('');
   const [bookingType, setBookingType] = useState<'emergency' | 'scheduled'>('emergency');
-  const [scheduledDate, setScheduledDate] = useState('');
-  const [scheduledTime, setScheduledTime] = useState('');
+  const [scheduledDate, setScheduledDate] = useState(new Date().toISOString().split('T')[0]);
+  const [scheduledTime, setScheduledTime] = useState(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -207,7 +214,19 @@ export default function App() {
   const [availabilityFilter, setAvailabilityFilter] = useState(false);
   const [showBookingConfirmation, setShowBookingConfirmation] = useState(false);
   const [showBookingWizard, setShowBookingWizard] = useState(false);
-  const [wizardStep, setWizardStep] = useState(1);
+  const [bookingWizardStep, setBookingWizardStep] = useState(1); // 1: Search, 2: Select, 3: Slots, 4: Confirm
+  const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
+  const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
+  const [showAiDiagnosticTool, setShowAiDiagnosticTool] = useState(false);
+
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'razorpay'>('cash');
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+
+  const timeSlots = [
+    "09:00 AM", "10:00 AM", "11:00 AM", "12:00 PM",
+    "01:00 PM", "02:00 PM", "03:00 PM", "04:00 PM",
+    "05:00 PM", "06:00 PM", "07:00 PM", "08:00 PM"
+  ];
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [aiDiagnosis, setAiDiagnosis] = useState<DiagnosticResult | null>(null);
   const [isDiagnosing, setIsDiagnosing] = useState(false);
@@ -290,19 +309,22 @@ export default function App() {
             ...(pendingRole === 'mechanic' && !currentData.specialty ? {
               specialty: 'General Auto Repair',
               category: 'car',
-              phone: '+1 555-0123',
-              price: '$85/hr',
+              phone: '+91 91234 56789',
+              price: '₹500/hr',
               eta: '15 mins',
               rating: 4.8,
               reviews: 12,
               isAvailable: true,
-              location: [40.7128 + (Math.random() - 0.5) * 0.05, -74.0060 + (Math.random() - 0.5) * 0.05],
+              location: [userLocation[0] + (Math.random() - 0.5) * 0.05, userLocation[1] + (Math.random() - 0.5) * 0.05],
               image: `https://picsum.photos/seed/${user.uid}/200/200`
             } : {})
           }).catch(e => handleFirestoreError(e, OperationType.UPDATE, `users/${user.uid}`));
           localStorage.removeItem('pendingRole');
         } else {
           setUserRole(currentData.role || 'user');
+          if (currentData.phone && !userPhone) {
+            setUserPhone(currentData.phone);
+          }
           if (pendingRole) localStorage.removeItem('pendingRole');
         }
       } else {
@@ -311,8 +333,8 @@ export default function App() {
         const mechanicData = roleToSet === 'mechanic' ? {
           specialty: 'General Auto Repair',
           category: 'car',
-          phone: '+1 555-0123',
-          price: '$85/hr',
+          phone: '+91 91234 56789',
+          price: '₹500/hr',
           eta: '15 mins',
           rating: 4.8,
           reviews: 12,
@@ -344,7 +366,7 @@ export default function App() {
     const q = query(
       collection(db, 'users'),
       where('role', '==', 'mechanic'),
-      limit(5)
+      limit(50)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -357,10 +379,10 @@ export default function App() {
           reviews: data.reviews || 10,
           distance: data.distance || '2.5 km',
           specialty: data.specialty || 'General Auto Repair',
-          phone: data.phone || '+1 555-0123',
+          phone: data.phone || '+91 91234 56789',
           location: data.location || [userLocation[0] + (Math.random() - 0.5) * 0.05, userLocation[1] + (Math.random() - 0.5) * 0.05],
           eta: data.eta || '15 mins',
-          price: data.price || '$85/hr',
+          price: data.price || '₹500/hr',
           image: data.image || `https://picsum.photos/seed/${doc.id}/200/200`,
           isAvailable: data.isAvailable !== false,
           experience: data.experience || '5+ years',
@@ -374,6 +396,27 @@ export default function App() {
 
     return () => unsubscribe();
   }, [isAuthReady, user]);
+
+  // Track mechanic location when they have an active booking
+  useEffect(() => {
+    if (userRole === 'mechanic' && mechanicBookings.length > 0 && navigator.geolocation) {
+      const activeBooking = mechanicBookings.find(b => ['en_route', 'arrived'].includes(b.status));
+      if (!activeBooking) return;
+
+      const watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          const newLoc: [number, number] = [position.coords.latitude, position.coords.longitude];
+          updateDoc(doc(db, 'bookings', activeBooking.id), {
+            mechanicLocation: newLoc
+          }).catch(e => console.error("Error updating mechanic location:", e));
+        },
+        (error) => console.error("Geolocation error:", error),
+        { enableHighAccuracy: true }
+      );
+
+      return () => navigator.geolocation.clearWatch(watchId);
+    }
+  }, [userRole, mechanicBookings]);
 
   // Fetch mechanic's active bookings
   useEffect(() => {
@@ -469,7 +512,7 @@ export default function App() {
         model: "gemini-3-flash-preview",
         contents: userMsg,
         config: {
-          systemInstruction: "You are a helpful automotive and motorcycle expert. Provide advice on vehicle maintenance, troubleshooting, and general automotive knowledge. Be concise and professional."
+          systemInstruction: "You are a helpful automotive and motorcycle expert. Provide advice on vehicle maintenance, troubleshooting, and general automotive knowledge. Be concise and professional. IMPORTANT: Always use Indian Rupees (₹) for any cost estimations. NEVER use dollars ($)."
         }
       });
       setAiMessages(prev => [...prev, { role: 'model', text: response.text || "I'm sorry, I couldn't process that." }]);
@@ -640,15 +683,98 @@ export default function App() {
     }
   }, [bookingId, userRole]);
 
-  const handleBook = () => {
-    if (!selectedMechanic || !user) return;
-    setShowBookingConfirmation(true);
+  const loadRazorpayScript = () => {
+    return new Promise((resolve) => {
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.onload = () => {
+        resolve(true);
+      };
+      script.onerror = () => {
+        resolve(false);
+      };
+      document.body.appendChild(script);
+    });
   };
 
-  const processBooking = async () => {
+  const handleCreateBooking = async () => {
+    if (!selectedSlot) {
+      alert("Please select a time slot first.");
+      return;
+    }
+
+    if (paymentMethod === 'razorpay') {
+      setIsProcessingPayment(true);
+      
+      const res = await loadRazorpayScript();
+      
+      if (!res) {
+        alert("Failed to load Razorpay SDK. Please check your internet connection.");
+        setIsProcessingPayment(false);
+        return;
+      }
+
+      const price = parseInt(selectedMechanic?.price.replace(/[^0-9]/g, '') || "1000");
+
+      try {
+        const orderResponse = await fetch('/api/create-razorpay-order', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amount: price * 100, receipt: 'receipt_' + Date.now() })
+        });
+        
+        const order = await orderResponse.json();
+
+        if (order.error) {
+          alert('Razorpay Error: ' + order.error);
+          setIsProcessingPayment(false);
+          return;
+        }
+
+        const options = {
+          key: import.meta.env.VITE_RAZORPAY_KEY_ID || 'rzp_test_mock_key', // Ensure this matches backend if present
+          amount: order.amount,
+          currency: order.currency,
+          name: "MechFinder Services",
+          description: `Service Ticket - ${vehicleInfo}`,
+          order_id: order.id,
+          handler: function (response: any) {
+            setIsProcessingPayment(false);
+            processBooking(response.razorpay_payment_id);
+          },
+          prefill: {
+            name: user?.displayName || "Customer",
+            email: user?.email || "customer@example.com",
+            contact: userPhone || "9999999999"
+          },
+          theme: {
+            color: "#dc2626"
+          },
+          modal: {
+            ondismiss: function() {
+              setIsProcessingPayment(false);
+            }
+          }
+        };
+
+        const paymentObject = new (window as any).Razorpay(options);
+        paymentObject.open();
+
+      } catch (err) {
+        console.error(err);
+        setIsProcessingPayment(false);
+        alert("Payment initialization failed.");
+      }
+
+    } else {
+      processBooking('cash');
+    }
+  };
+
+  const processBooking = async (paymentId?: string) => {
     if (!selectedMechanic || !user) return;
     
-    setShowBookingConfirmation(false);
+    setShowBookingWizard(false);
     setBookingState('confirming');
     
     try {
@@ -656,7 +782,7 @@ export default function App() {
         userId: user.uid,
         userName: user.displayName || 'Customer',
         userPhoto: user.photoURL,
-        userPhone: userPhone || '+1 555-9876',
+        userPhone: userPhone || '+91 99876 54321',
         vehicleInfo: vehicleInfo || 'Not specified',
         issueDescription: issueDescription || 'Not specified',
         mechanicId: selectedMechanic.id,
@@ -665,32 +791,46 @@ export default function App() {
         mechanicPrice: selectedMechanic.price,
         mechanicEta: selectedMechanic.eta,
         mechanicImage: selectedMechanic.image,
-        date: new Date().toISOString(),
+        date: scheduledDate || new Date().toISOString().split('T')[0],
         status: 'active',
         location: userLocation,
         mechanicLocation: selectedMechanic.location,
-        bookingType,
-        serviceType,
-        scheduledDate: bookingType === 'scheduled' ? scheduledDate : null,
-        scheduledTime: bookingType === 'scheduled' ? scheduledTime : null,
+        bookingType: bookingType,
+        serviceType: serviceType,
+        serviceLocation: serviceLocation,
+        additionalNotes: additionalNotes || null,
+        scheduledDate: scheduledDate,
+        scheduledTime: selectedSlot,
+        paymentMethod: paymentId && paymentId !== 'cash' ? 'razorpay' : 'cash',
+        paymentStatus: paymentId && paymentId !== 'cash' ? 'paid' : 'pending',
+        paymentId: paymentId !== 'cash' ? paymentId : null,
         createdAt: serverTimestamp()
       });
       
       setBookingId(docRef.id);
+      setBookingState('active');
       setLiveLocation(selectedMechanic.location);
+      setShowSuccessAnimation(true);
 
-      // Notify mechanic of new booking
+      // Notify mechanic
       socketRef.current?.emit('send_notification', {
         targetUserId: selectedMechanic.id,
-        title: 'New Booking Request',
-        body: `You have a new booking request from ${user.displayName || 'a customer'}.`,
+        title: 'New Service Ticket',
+        body: `New ${serviceType.replace('_', ' ')} request for ${selectedSlot}`,
         type: 'new_booking'
       });
+      
+      // Reset wizard
+      setBookingWizardStep(1);
+      setSelectedSlot(null);
+
+      // Auto-hide success animation
+      setTimeout(() => setShowSuccessAnimation(false), 3500);
       
     } catch (error: any) {
       handleFirestoreError(error, OperationType.CREATE, 'bookings');
       setBookingState('idle');
-      alert('Failed to book mechanic. Please try again.');
+      alert('Selection failed. Please retry.');
     }
   };
 
@@ -845,10 +985,10 @@ export default function App() {
     if (!user) return;
     const sampleMechs = [
       {
-        name: "Alex 'The Wrench' Rivera",
+        name: "Arjun Reddy",
         specialty: "Engine & Transmission Specialist",
-        phone: "+1 555-0101",
-        price: "$95/hr",
+        phone: "+91 98450 12345",
+        price: "₹750/hr",
         category: "car",
         eta: "12 mins",
         rating: 4.9,
@@ -862,10 +1002,10 @@ export default function App() {
         bio: "Master technician with a passion for high-performance engines. I specialize in complex transmission repairs and engine rebuilds."
       },
       {
-        name: "Sarah Chen",
+        name: "Anjali Rao",
         specialty: "Electrical & Hybrid Systems",
-        phone: "+1 555-0102",
-        price: "$110/hr",
+        phone: "+91 98450 12346",
+        price: "₹1000/hr",
         category: "car",
         eta: "8 mins",
         rating: 4.7,
@@ -879,10 +1019,10 @@ export default function App() {
         bio: "Certified hybrid specialist. I love solving complex electrical gremlins and keeping the latest eco-friendly vehicles on the road."
       },
       {
-        name: "Marcus Johnson",
+        name: "Karthik Saravanan",
         specialty: "Tires, Brakes & Suspension",
-        phone: "+1 555-0103",
-        price: "$75/hr",
+        phone: "+91 98450 12347",
+        price: "₹600/hr",
         category: "both",
         eta: "20 mins",
         rating: 4.6,
@@ -896,10 +1036,10 @@ export default function App() {
         bio: "Fast, reliable, and honest. I've changed more tires than I can count. Your safety is my top priority when it comes to brakes and suspension."
       },
       {
-        name: "Elena Rodriguez",
+        name: "Meera Iyer",
         specialty: "Emergency Roadside & Diagnostics",
-        phone: "+1 555-0104",
-        price: "$85/hr",
+        phone: "+91 98450 12348",
+        price: "₹700/hr",
         category: "car",
         eta: "5 mins",
         rating: 5.0,
@@ -915,8 +1055,8 @@ export default function App() {
       {
         name: "Rajesh Kumar",
         specialty: "Bike Engine & Chain Specialist",
-        phone: "+1 555-0105",
-        price: "$45/hr",
+        phone: "+91 81234 56789",
+        price: "₹400/hr",
         category: "bike",
         eta: "10 mins",
         rating: 4.8,
@@ -932,8 +1072,8 @@ export default function App() {
       {
         name: "Priya Sharma",
         specialty: "Two-Wheeler Electricals",
-        phone: "+1 555-0106",
-        price: "$40/hr",
+        phone: "+91 81234 56790",
+        price: "₹350/hr",
         category: "bike",
         eta: "15 mins",
         rating: 4.9,
@@ -947,10 +1087,10 @@ export default function App() {
         bio: "Expert in bike wiring and battery issues. I'll get your bike started in no time."
       },
       {
-        name: "Tom 'Turbo' Wilson",
+        name: "Vikram Singh",
         specialty: "Performance Tuning & Car Mods",
-        phone: "+1 555-0107",
-        price: "$120/hr",
+        phone: "+91 81234 56791",
+        price: "₹1200/hr",
         category: "car",
         eta: "18 mins",
         rating: 4.9,
@@ -1086,206 +1226,326 @@ export default function App() {
         </AnimatePresence>
       </div>
 
-      {/* Booking Wizard Modal */}
+      {/* Booking Wizard (redBus Style) */}
       <AnimatePresence>
         {showBookingWizard && (
-          <div className="fixed inset-0 z-[1000] flex items-end md:items-center justify-center p-0 md:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-gray-100 overflow-y-auto">
             <motion.div 
-              initial={{ opacity: 0, y: '100%' }}
+              initial={{ opacity: 0, y: "100%" }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: '100%' }}
-              className="bg-white rounded-t-3xl md:rounded-3xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]"
+              exit={{ opacity: 0, y: "100%" }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="bg-white w-full h-full max-w-lg flex flex-col"
             >
-              <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-white sticky top-0 z-10 flex-shrink-0">
-                <h3 className="text-xl font-bold text-gray-900">
-                  {wizardStep === 1 ? 'Service Details' : 'Vehicle & Issue'}
-                </h3>
-                <button onClick={() => { setShowBookingWizard(false); setSelectedMechanic(null); }} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
-                  <X className="w-5 h-5 text-gray-500" />
+              {/* Header */}
+              <div className="bg-red-600 text-white p-4 pt-10 sticky top-0 z-50 flex items-center gap-4">
+                <button 
+                  onClick={() => {
+                    if (bookingWizardStep > 1) setBookingWizardStep(prev => prev - 1);
+                    else setShowBookingWizard(false);
+                  }}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                >
+                  <ArrowLeft className="w-6 h-6" />
                 </button>
+                <div>
+                  <h3 className="font-bold text-lg">
+                    {bookingWizardStep === 1 && "Search Service"}
+                    {bookingWizardStep === 2 && "Select Mechanic"}
+                    {bookingWizardStep === 3 && "Pick Time Slot"}
+                    {bookingWizardStep === 4 && "Review Ticket"}
+                  </h3>
+                  <div className="flex gap-2 mt-1">
+                    {[1, 2, 3, 4].map(s => (
+                      <div key={s} className={`h-1 flex-1 rounded-full ${s <= bookingWizardStep ? 'bg-white' : 'bg-red-400'}`} />
+                    ))}
+                  </div>
+                </div>
               </div>
 
-              <div className="p-6 overflow-y-auto flex-1">
-                {wizardStep === 1 && (
+              <div className="flex-1 overflow-y-auto p-4 space-y-6">
+                {/* STEP 1: SEARCH */}
+                {bookingWizardStep === 1 && (
                   <div className="space-y-6">
-                    {/* Urgency */}
-                    <div>
-                      <label className="block text-sm font-bold text-gray-900 mb-3">Service Urgency</label>
-                      <div className="flex gap-3">
-                        <button
-                          onClick={() => setBookingType('emergency')}
-                          className={`flex-1 flex flex-col items-center justify-center gap-2 p-4 rounded-2xl border-2 transition-all ${bookingType === 'emergency' ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-100 hover:border-red-200'}`}
-                        >
-                          <AlertTriangle className={`w-6 h-6 ${bookingType === 'emergency' ? 'text-red-500' : 'text-gray-400'}`} />
-                          <span className="font-bold text-sm">Emergency</span>
-                        </button>
-                        <button
-                          onClick={() => setBookingType('scheduled')}
-                          className={`flex-1 flex flex-col items-center justify-center gap-2 p-4 rounded-2xl border-2 transition-all ${bookingType === 'scheduled' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-100 hover:border-blue-200'}`}
-                        >
-                          <Calendar className={`w-6 h-6 ${bookingType === 'scheduled' ? 'text-blue-500' : 'text-gray-400'}`} />
-                          <span className="font-bold text-sm">Scheduled</span>
-                        </button>
+                    <div className="relative bg-white rounded-2xl border border-gray-100 shadow-xl p-6 mt-4">
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-4 p-3 bg-gray-50 rounded-xl">
+                          <MapPin className="w-5 h-5 text-red-500" />
+                          <div className="flex-1">
+                            <p className="text-[10px] uppercase font-bold text-gray-400">Your Location</p>
+                            <p className="text-sm font-semibold text-gray-900 truncate">Current Location Detected</p>
+                          </div>
+                        </div>
+                        <div className="w-full h-px bg-gray-100 ml-12" />
+                        <div className="flex items-center gap-4 p-3 bg-gray-50 rounded-xl">
+                          <Car className="w-5 h-5 text-blue-500" />
+                          <div className="flex-1">
+                            <p className="text-[10px] uppercase font-bold text-gray-400">Vehicle Make/Model</p>
+                            <input 
+                              type="text" 
+                              value={vehicleInfo}
+                              onChange={(e) => setVehicleInfo(e.target.value)}
+                              placeholder="Enter Vehicle Details"
+                              className="w-full bg-transparent text-sm font-semibold outline-none placeholder:text-gray-300"
+                            />
+                          </div>
+                        </div>
                       </div>
                     </div>
 
-                    {/* Date/Time if Scheduled */}
-                    {bookingType === 'scheduled' && (
-                      <div className="grid grid-cols-2 gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
-                        <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1 ml-1">Date</label>
-                          <input 
-                            type="date" 
-                            value={scheduledDate}
-                            onChange={(e) => setScheduledDate(e.target.value)}
-                            min={new Date().toISOString().split('T')[0]}
-                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1 ml-1">Time</label>
-                          <input 
-                            type="time" 
-                            value={scheduledTime}
-                            onChange={(e) => setScheduledTime(e.target.value)}
-                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
-                          />
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Service Type */}
                     <div>
-                      <label className="block text-sm font-bold text-gray-900 mb-3">Type of Service</label>
-                      <div className="space-y-2">
+                      <h4 className="font-bold text-gray-900 mb-3 flex items-center gap-2">
+                        <Zap className="w-4 h-4 text-yellow-500" /> Quick Services
+                      </h4>
+                      <div className="grid grid-cols-2 gap-3">
                         {[
-                          { id: 'general_maintenance', label: 'General Maintenance', desc: 'Oil change, tune-up, standard checks' },
-                          { id: 'emergency_repair', label: 'Emergency Repair', desc: 'Breakdown, won\'t start, accidents' },
-                          { id: 'part_replacement', label: 'Specific Part Replacement', desc: 'Brakes, Battery, Tires, etc.' },
-                          { id: 'diagnostics', label: 'Inspection / Diagnostics', desc: 'Strange noises, check engine light' }
+                          { id: 'general_maintenance', label: 'Maintenance', icon: <Wrench className="w-5 h-5" /> },
+                          { id: 'emergency_repair', label: 'Breakdown', icon: <AlertTriangle className="w-5 h-5" /> },
+                          { id: 'battery', label: 'Battery Check', icon: <Zap className="w-5 h-5" /> },
+                          { id: 'tire', label: 'Tyre Change', icon: <Disc className="w-5 h-5" /> }
                         ].map(type => (
                           <div 
                             key={type.id}
                             onClick={() => setServiceType(type.id)}
-                            className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${serviceType === type.id ? 'border-red-500 bg-red-50' : 'border-gray-100 hover:border-red-200 bg-white'}`}
+                            className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex items-center gap-3 ${serviceType === type.id ? 'border-red-500 bg-red-50' : 'border-gray-100 bg-white'}`}
                           >
-                            <div className="font-bold text-sm text-gray-900">{type.label}</div>
-                            <div className="text-xs text-gray-500 mt-0.5">{type.desc}</div>
+                            <div className="p-2 bg-gray-100 rounded-lg">{type.icon}</div>
+                            <span className="font-bold text-xs">{type.label}</span>
                           </div>
                         ))}
                       </div>
                     </div>
-                    
+
+                    <div>
+                      <h4 className="font-bold text-gray-900 mb-3">Service Date</h4>
+                      <div className="flex gap-2">
+                        {[0, 1, 2, 3].map(d => {
+                          const date = new Date();
+                          date.setDate(date.getDate() + d);
+                          const dayStr = date.toLocaleDateString('en-US', { weekday: 'short' });
+                          const dateStr = date.getDate();
+                          const val = date.toISOString().split('T')[0];
+                          return (
+                            <div 
+                              key={d}
+                              onClick={() => {
+                                setScheduledDate(val);
+                                setBookingType(d === 0 ? 'emergency' : 'scheduled');
+                              }}
+                              className={`flex-1 p-3 rounded-xl border-2 flex flex-col items-center gap-1 cursor-pointer transition-all ${scheduledDate === val ? 'border-red-500 bg-red-50 text-red-600' : 'border-gray-100 text-gray-400'}`}
+                            >
+                              <span className="text-[10px] font-bold uppercase">{dayStr}</span>
+                              <span className="text-lg font-bold">{dateStr}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
                     <button 
-                      onClick={() => setWizardStep(2)}
-                      disabled={bookingType === 'scheduled' && (!scheduledDate || !scheduledTime)}
-                      className="w-full py-4 bg-gray-900 text-white font-bold rounded-xl transition-all disabled:bg-gray-300 active:scale-[0.98] mt-2 group flex items-center justify-center gap-2"
+                      onClick={() => setBookingWizardStep(2)}
+                      disabled={!vehicleInfo || !scheduledDate}
+                      className="w-full py-4 bg-red-500 text-white font-bold rounded-2xl shadow-xl shadow-red-500/30 transition-all active:scale-95 disabled:bg-gray-200 disabled:shadow-none"
                     >
-                      Next Step <ArrowLeft className="w-4 h-4 rotate-180" />
+                      SEARCH MECHANICS
                     </button>
                   </div>
                 )}
 
-                {wizardStep === 2 && (
-                  <div className="space-y-5">
-                    <div>
-                      <label className="block text-sm font-bold text-gray-900 mb-1">Vehicle Make & Model</label>
-                      <input 
-                        type="text" 
-                        value={vehicleInfo}
-                        onChange={(e) => setVehicleInfo(e.target.value)}
-                        placeholder="e.g. 2018 Toyota Camry"
-                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
-                      />
-                    </div>
-
-                    <div>
-                      <div className="flex items-center gap-1.5 mb-1 justify-between">
-                        <label className="block text-sm font-bold text-gray-900">Issue Description</label>
-                        <button 
-                          onClick={handleAiDiagnose}
-                          disabled={isDiagnosing || !issueDescription.trim() || !vehicleInfo.trim()}
-                          className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full transition-all ${
-                            isDiagnosing 
-                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-                              : (!issueDescription.trim() || !vehicleInfo.trim())
-                                ? 'bg-gray-50 text-gray-400 cursor-not-allowed'
-                                : 'bg-red-50 text-red-600 hover:bg-red-100'
-                          }`}
-                        >
-                          {isDiagnosing ? (
-                            <div className="w-3 h-3 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
-                          ) : (
-                            <Sparkles className="w-3 h-3" />
-                          )}
-                          AI Diagnose
-                        </button>
+                {/* STEP 2: SELECT MECHANIC */}
+                {bookingWizardStep === 2 && (
+                  <div className="space-y-4">
+                    <div className="bg-blue-50 p-4 rounded-xl flex items-center justify-between">
+                      <div>
+                        <p className="text-xs text-blue-600 font-bold uppercase tracking-wider">Top Rated Operators</p>
+                        <p className="text-sm font-bold text-blue-900">{filteredMechanics.length} Available Mechanics</p>
                       </div>
-                      <textarea 
-                        value={issueDescription}
-                        onChange={(e) => setIssueDescription(e.target.value)}
-                        placeholder="Describe the problem (e.g. Flat tire, won't start)"
-                        rows={3}
-                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all resize-none"
-                      />
+                      <div className="p-2 bg-white rounded-lg">
+                        <Users className="w-5 h-5 text-blue-500" />
+                      </div>
                     </div>
 
-                    <AnimatePresence>
-                      {aiDiagnosis && (
-                        <motion.div 
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className="overflow-hidden"
-                        >
-                          <div className="bg-red-50/50 border border-red-100 rounded-2xl p-4 mt-2">
-                             <div className="flex items-center gap-2 text-red-700 font-bold text-xs uppercase tracking-wider mb-3">
-                              <Sparkles className="w-4 h-4" />
-                              AI Preliminary Diagnosis
-                            </div>
-                            <div className="space-y-3">
-                              <p className="text-sm text-gray-800 leading-relaxed">{aiDiagnosis.diagnosis}</p>
+                    {filteredMechanics.map(mech => (
+                      <div 
+                        key={mech.id} 
+                        className="bg-white rounded-2xl border border-gray-100 shadow-md hover:shadow-lg transition-all p-4 space-y-4"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex gap-4">
+                            <img src={mech.image} className="w-14 h-14 rounded-xl object-cover" referrerPolicy="no-referrer" />
+                            <div>
+                              <h4 className="font-bold text-gray-900 leading-tight">{mech.name}</h4>
+                              <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">{mech.specialty}</p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <div className="flex items-center gap-1 bg-green-100 text-green-700 px-1.5 py-0.5 rounded text-[10px] font-bold">
+                                  <Star className="w-3 h-3 fill-green-700" /> {mech.rating}
+                                </div>
+                                <span className="text-[10px] text-gray-400 font-medium">• 124 Orders</span>
+                              </div>
                             </div>
                           </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                          <div className="text-right">
+                            <span className="text-xs text-gray-400 line-through block">₹1200</span>
+                            <span className="text-lg font-bold text-red-600 leading-none">{formatDisplayPrice(mech.price)}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-4 bg-gray-50 rounded-xl p-3 text-[10px] font-bold text-gray-500 uppercase tracking-tighter overflow-x-auto">
+                          <div className="flex items-center gap-1.5 shrink-0"><ShieldCheck className="w-3 h-3 text-green-500" /> Verified</div>
+                          <div className="flex items-center gap-1.5 shrink-0"><Clock className="w-3 h-3 text-blue-500" /> {mech.eta} ETA</div>
+                          <div className="flex items-center gap-1.5 shrink-0"><Navigation className="w-3 h-3 text-red-500" /> {mech.distance}</div>
+                        </div>
+
+                        <button 
+                          onClick={() => {
+                            setSelectedMechanic(mech);
+                            setBookingWizardStep(3);
+                          }}
+                          className="w-full py-3 bg-red-600 text-white font-bold rounded-xl transition-all active:scale-[0.98]"
+                        >
+                          SELECT SLOT
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* STEP 3: SLOT SELECTION */}
+                {bookingWizardStep === 3 && selectedMechanic && (
+                  <div className="space-y-6">
+                    <div className="bg-gray-900 text-white p-6 rounded-3xl space-y-4">
+                      <div className="flex justify-between items-center pb-4 border-b border-white/10">
+                        <div>
+                          <p className="text-[10px] text-gray-400 uppercase font-bold tracking-widest">Selected Expert</p>
+                          <h4 className="font-bold text-xl">{selectedMechanic.name}</h4>
+                        </div>
+                        <img src={selectedMechanic.image} className="w-12 h-12 rounded-full border-2 border-red-500 p-0.5" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 text-xs font-bold uppercase tracking-widest text-gray-400">
+                        <div><p className="mb-1">Vehicle</p><p className="text-white">{vehicleInfo}</p></div>
+                        <div><p className="mb-1">Service</p><p className="text-white">{serviceType.replace('_', ' ')}</p></div>
+                      </div>
+                    </div>
 
                     <div>
-                      <label className="block text-sm font-bold text-gray-900 mb-1">Your Phone Number</label>
-                      <input 
-                        type="tel" 
-                        value={userPhone}
-                        onChange={(e) => setUserPhone(e.target.value)}
-                        placeholder="e.g. +1 555-0198"
-                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
-                      />
+                      <div className="flex items-center justify-between mb-4">
+                        <h4 className="font-bold text-gray-900">Available Slots</h4>
+                        <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Select One Time Slot</span>
+                      </div>
+                      
+                      <div className="grid grid-cols-3 gap-3">
+                        {timeSlots.map(slot => (
+                          <button
+                            key={slot}
+                            onClick={() => setSelectedSlot(slot)}
+                            className={`p-4 rounded-xl border-2 font-bold text-sm transition-all ${
+                              selectedSlot === slot 
+                                ? 'border-red-500 bg-red-50 text-red-600 shadow-md shadow-red-500/10' 
+                                : 'border-gray-100 text-gray-500 hover:border-gray-200'
+                            }`}
+                          >
+                            {slot}
+                          </button>
+                        ))}
+                      </div>
                     </div>
 
-                    <div className="flex gap-3 pt-2">
-                      <button 
-                        onClick={() => setWizardStep(1)}
-                        className="flex-1 px-4 py-4 bg-gray-100 text-gray-700 font-bold rounded-xl hover:bg-gray-200 transition-all"
-                      >
-                        Back
-                      </button>
-                      <button 
-                        onClick={() => {
-                          const nearest = [...mechanics].filter(m => m.isAvailable !== false).sort((a, b) => parseFloat(a.distance) - parseFloat(b.distance))[0];
-                          if (nearest) {
-                            setSelectedMechanic(nearest);
-                            setShowBookingWizard(false);
-                            setShowBookingConfirmation(true);
-                          } else {
-                            alert("No available mechanics nearby right now. Please try again later.");
-                          }
-                        }}
-                        disabled={!vehicleInfo.trim() || !issueDescription.trim() || !userPhone.trim()}
-                        className="flex-[2] py-4 bg-red-500 text-white font-bold rounded-xl shadow-lg shadow-red-500/20 transition-all disabled:bg-gray-300 disabled:shadow-none active:scale-[0.98] flex items-center justify-center gap-2"
-                      >
-                        <Search className="w-4 h-4" /> Find Mechanic
-                      </button>
+                    <button 
+                      onClick={() => setBookingWizardStep(4)}
+                      disabled={!selectedSlot}
+                      className="w-full py-4 bg-red-600 text-white font-bold rounded-2xl shadow-xl transition-all active:scale-95 disabled:bg-gray-200 shadow-red-500/20"
+                    >
+                      PROCEED TO REVIEW
+                    </button>
+                  </div>
+                )}
+
+                {/* STEP 4: REVIEW & CONFIRM */}
+                {bookingWizardStep === 4 && selectedMechanic && (
+                  <div className="space-y-6 text-center">
+                    <div className="bg-white border-2 border-dashed border-red-200 rounded-[2rem] p-8 shadow-xl">
+                      <div className="space-y-2 mb-6">
+                        <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto" />
+                        <h3 className="text-2xl font-black text-gray-900">BOOKING SUMMARY</h3>
+                      </div>
+
+                      <div className="space-y-4 text-left">
+                        <div className="flex justify-between border-b pb-2">
+                          <span className="text-gray-400 text-xs font-bold uppercase">Vehicle</span>
+                          <span className="font-bold">{vehicleInfo}</span>
+                        </div>
+                        <div className="flex justify-between border-b pb-2">
+                          <span className="text-gray-400 text-xs font-bold uppercase">Service</span>
+                          <span className="font-bold capitalize">{serviceType.replace('_', ' ')}</span>
+                        </div>
+                        <div className="flex justify-between border-b pb-2">
+                          <span className="text-gray-400 text-xs font-bold uppercase">Mechanic</span>
+                          <span className="font-bold">{selectedMechanic.name}</span>
+                        </div>
+                        <div className="flex justify-between border-b pb-2 text-red-500">
+                          <span className="text-xs font-bold uppercase">Payment Mode</span>
+                          <span className="font-bold">Pay After Service</span>
+                        </div>
+                        <div className="flex justify-between pt-2">
+                          <span className="text-gray-400 text-xs font-bold uppercase">Estimated Total</span>
+                          <span className="text-2xl font-black text-gray-900">{formatDisplayPrice(selectedMechanic.price)}</span>
+                        </div>
+                      </div>
+
+                      <div className="mt-8 p-4 bg-gray-50 rounded-2xl">
+                        <div className="flex items-center justify-around">
+                          <div className="text-center">
+                            <p className="text-[10px] text-gray-400 font-bold uppercase">Date</p>
+                            <p className="font-bold">{scheduledDate}</p>
+                          </div>
+                          <div className="w-px h-8 bg-gray-200" />
+                          <div className="text-center">
+                            <p className="text-[10px] text-gray-400 font-bold uppercase">Time</p>
+                            <p className="font-bold">{selectedSlot}</p>
+                          </div>
+                        </div>
+                      </div>
                     </div>
+
+                    <div className="bg-white rounded-[2rem] p-6 shadow-xl space-y-4">
+                      <h4 className="font-bold text-gray-900 text-left">How would you like to pay?</h4>
+                      <div className="grid grid-cols-2 gap-3">
+                        <button
+                          onClick={() => setPaymentMethod('cash')}
+                          className={`p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${
+                            paymentMethod === 'cash' 
+                              ? 'border-red-500 bg-red-50 text-red-600' 
+                              : 'border-gray-100 text-gray-500'
+                          }`}
+                        >
+                          <IndianRupee className="w-6 h-6" />
+                          <span className="font-bold text-xs">Pay Later (Cash)</span>
+                        </button>
+                        <button
+                          onClick={() => setPaymentMethod('razorpay')}
+                          className={`p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${
+                            paymentMethod === 'razorpay' 
+                              ? 'border-blue-500 bg-blue-50 text-blue-600' 
+                              : 'border-gray-100 text-gray-500'
+                          }`}
+                        >
+                          <CreditCard className="w-6 h-6" />
+                          <span className="font-bold text-xs">Pay Now (Razorpay)</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={handleCreateBooking}
+                      disabled={isProcessingPayment}
+                      className="w-full py-5 bg-gray-900 text-white font-black text-lg rounded-3xl shadow-2xl transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {isProcessingPayment ? (
+                        <><div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> PROCESSING...</>
+                      ) : (
+                         paymentMethod === 'razorpay' ? 'PAY & CONFIRM TICKET' : 'CONFIRM SERVICE TICKET'
+                      )}
+                    </button>
                   </div>
                 )}
               </div>
@@ -1294,106 +1554,227 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Booking Confirmation Modal */}
+      {/* AI Diagnostic Tool Modal */}
       <AnimatePresence>
-        {showBookingConfirmation && selectedMechanic && (
-          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <motion.div 
+        {showAiDiagnosticTool && (
+          <div className="fixed inset-0 z-[1500] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden bg-gradient-to-b from-white to-gray-50"
             >
-              <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-                <h3 className="text-xl font-bold text-gray-900">Confirm Booking</h3>
-                <button onClick={() => setShowBookingConfirmation(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+              <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-white">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-red-50 rounded-xl text-red-500">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-xl font-black text-gray-900 tracking-tight">AI DIAGNOSIS</h3>
+                </div>
+                <button 
+                  onClick={() => {
+                    setShowAiDiagnosticTool(false);
+                    setAiDiagnosis(null);
+                  }} 
+                  className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+                >
                   <X className="w-5 h-5 text-gray-500" />
                 </button>
               </div>
-              
-              <div className="p-6 space-y-6">
-                {/* Mechanic Summary */}
-                <div className="flex items-center gap-4 bg-gray-50 p-4 rounded-2xl">
-                  <img 
-                    src={selectedMechanic.image} 
-                    alt={selectedMechanic.name} 
-                    className="w-16 h-16 rounded-full object-cover border-2 border-white shadow-sm" 
-                    referrerPolicy="no-referrer"
-                  />
-                  <div>
-                    <h4 className="font-bold text-gray-900">{selectedMechanic.name}</h4>
-                    <p className="text-sm text-gray-500">{selectedMechanic.specialty}</p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />
-                      <span className="text-xs font-bold">{selectedMechanic.rating}</span>
-                    </div>
-                  </div>
-                  <div className="ml-auto text-right">
-                    <div className="text-lg font-bold text-red-500">{selectedMechanic.price}</div>
-                    <div className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">Estimated Cost</div>
-                  </div>
-                </div>
 
-                {/* Service Details */}
-                <div className="space-y-4">
-                  <div className="flex items-start gap-3">
-                    <div className="bg-blue-50 p-2 rounded-lg mt-1">
-                      <Car className="w-4 h-4 text-blue-500" />
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Vehicle & Issue</p>
-                      <p className="text-sm font-medium text-gray-900">{vehicleInfo}</p>
-                      <p className="text-xs text-gray-700 mt-1">Service Type: 
-                        {serviceType === 'general_maintenance' && ' General Maintenance'}
-                        {serviceType === 'emergency_repair' && ' Emergency Repair'}
-                        {serviceType === 'part_replacement' && ' Specific Part Replacement'}
-                        {serviceType === 'diagnostics' && ' Inspection/Diagnostics'}
-                      </p>
-                      <p className="text-xs text-gray-500 mt-1">{issueDescription}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-start gap-3">
-                    <div className="bg-green-50 p-2 rounded-lg mt-1">
-                      <MapPin className="w-4 h-4 text-green-500" />
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Service Location</p>
-                      <p className="text-sm font-medium text-gray-900">Your current location</p>
-                      <p className="text-xs text-gray-500 mt-1">Mechanic ETA: {selectedMechanic.eta}</p>
-                    </div>
-                  </div>
-
-                  {bookingType === 'scheduled' && (
-                    <div className="flex items-start gap-3">
-                      <div className="bg-purple-50 p-2 rounded-lg mt-1">
-                        <Calendar className="w-4 h-4 text-purple-500" />
-                      </div>
+              <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+                {!aiDiagnosis ? (
+                  <div className="space-y-5">
+                    <p className="text-sm text-gray-500 font-medium leading-relaxed">
+                      Enter your vehicle details and describe the symptoms. Our AI will analyze the data to provide a preliminary report.
+                    </p>
+                    
+                    <div className="space-y-4">
                       <div>
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Scheduled For</p>
-                        <p className="text-sm font-medium text-gray-900">{scheduledDate} at {scheduledTime}</p>
+                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Vehicle Make / Model</label>
+                        <div className="relative">
+                          <Car className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                          <input 
+                            type="text" 
+                            value={vehicleInfo}
+                            onChange={(e) => setVehicleInfo(e.target.value)}
+                            placeholder="e.g. 2018 Toyota Camry"
+                            className="w-full pl-11 pr-4 py-4 bg-white border-2 border-gray-100 rounded-2xl focus:border-red-500 outline-none transition-all font-bold text-gray-900 placeholder:text-gray-300 shadow-sm"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Describe the symptoms</label>
+                        <textarea 
+                          value={issueDescription}
+                          onChange={(e) => setIssueDescription(e.target.value)}
+                          placeholder="e.g. Strange clicking sound when turning the steering wheel, or engine temperature rising rapidly..."
+                          rows={4}
+                          className="w-full px-4 py-4 bg-white border-2 border-gray-100 rounded-2xl focus:border-red-500 outline-none transition-all font-bold text-gray-900 placeholder:text-gray-300 shadow-sm resize-none"
+                        />
                       </div>
                     </div>
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="space-y-6"
+                  >
+                    <div className="bg-red-50 rounded-2xl p-6 border border-red-100">
+                      <h4 className="text-xs font-black text-red-600 uppercase tracking-widest mb-4 flex items-center gap-2">
+                        <Zap className="w-4 h-4" /> AI PRELIMINARY REPORT
+                      </h4>
+                      <p className="text-sm text-gray-800 font-bold leading-relaxed mb-6">
+                        {aiDiagnosis.diagnosis}
+                      </p>
+                      
+                      <div className="grid grid-cols-2 gap-3 mb-6">
+                        <div className="bg-white p-3 rounded-xl border border-red-100">
+                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Severity</p>
+                          <p className={`text-xs font-black uppercase tracking-wider ${
+                            aiDiagnosis.severity === 'high' ? 'text-red-600' : 
+                            aiDiagnosis.severity === 'medium' ? 'text-orange-600' : 
+                            'text-green-600'
+                          }`}>
+                            {aiDiagnosis.severity}
+                          </p>
+                        </div>
+                        <div className="bg-white p-3 rounded-xl border border-red-100">
+                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Estimated Cost</p>
+                          <p className="text-xs font-black text-gray-900">{aiDiagnosis.estimatedCost}</p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Recommended Next Steps</p>
+                        <div className="space-y-2">
+                          {aiDiagnosis.nextSteps.map((step, idx) => (
+                            <div key={idx} className="flex gap-3 bg-white/50 p-3 rounded-xl border border-red-50">
+                              <CheckCircle2 className="w-4 h-4 text-red-500 shrink-0" />
+                              <span className="text-xs font-bold text-gray-700">{step}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
               </div>
 
-              <div className="p-6 bg-gray-50 flex gap-3">
-                <button 
-                  onClick={() => setShowBookingConfirmation(false)}
-                  className="flex-1 py-3 px-4 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={processBooking}
-                  className="flex-1 py-3 px-4 bg-red-500 text-white font-bold rounded-xl hover:bg-red-600 transition-colors shadow-lg shadow-red-500/20"
-                >
-                  Confirm & Request
-                </button>
+              <div className="p-6 bg-white border-t border-gray-100">
+                {!aiDiagnosis ? (
+                  <button 
+                    onClick={handleAiDiagnose}
+                    disabled={isDiagnosing || !vehicleInfo.trim() || !issueDescription.trim()}
+                    className="w-full py-5 bg-gray-900 text-white font-black text-sm rounded-2xl shadow-xl active:scale-95 transition-all disabled:bg-gray-200 disabled:shadow-none flex items-center justify-center gap-2 group"
+                  >
+                    {isDiagnosing ? (
+                      <>
+                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        ANALYZING...
+                      </>
+                    ) : (
+                      <>
+                        RUN AI DIAGNOSIS
+                        <Sparkles className="w-5 h-5 text-red-500 group-hover:scale-110 transition-transform" />
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  <div className="flex gap-3">
+                    <button 
+                      onClick={() => setAiDiagnosis(null)}
+                      className="flex-1 py-4 bg-gray-100 text-gray-900 font-bold text-sm rounded-2xl active:scale-95 transition-all"
+                    >
+                      CLEAR
+                    </button>
+                    <button 
+                      onClick={() => setShowAiDiagnosticTool(false)}
+                      className="flex-[2] py-4 bg-red-600 text-white font-black text-sm rounded-2xl shadow-xl active:scale-95 transition-all"
+                    >
+                      GOT IT
+                    </button>
+                  </div>
+                )}
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Booking Success Animation (Stimulation) */}
+      <AnimatePresence>
+        {showSuccessAnimation && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[2000] flex items-center justify-center bg-red-600"
+          >
+            <div className="text-center space-y-6 px-6">
+              <motion.div
+                initial={{ scale: 0, rotate: -45 }}
+                animate={{ scale: 1, rotate: 0 }}
+                transition={{ type: 'spring', damping: 12, stiffness: 200, delay: 0.2 }}
+                className="w-32 h-32 bg-white rounded-full mx-auto flex items-center justify-center shadow-2xl relative"
+              >
+                <div className="absolute inset-0 rounded-full border-4 border-white animate-ping opacity-20" />
+                <CheckCircle2 className="w-16 h-16 text-red-600" />
+              </motion.div>
+              
+              <div className="space-y-2">
+                <motion.h2 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.4 }}
+                  className="text-3xl font-black text-white uppercase tracking-tighter"
+                >
+                  Ticket Confirmed!
+                </motion.h2>
+                <motion.p 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.5 }}
+                  className="text-red-100 font-bold"
+                >
+                  Your expert has been notified
+                </motion.p>
+              </div>
+
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: 0.7 }}
+                className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/20 inline-block"
+              >
+                <div className="flex items-center gap-4 text-white">
+                  <div className="text-left">
+                    <p className="text-[10px] opacity-60 uppercase font-black tracking-widest">Confirmation ID</p>
+                    <p className="font-mono text-sm">#{bookingId?.slice(-6).toUpperCase()}</p>
+                  </div>
+                  <div className="w-px h-8 bg-white/20" />
+                  <div className="text-left">
+                    <p className="text-[10px] opacity-60 uppercase font-black tracking-widest">Slot</p>
+                    <p className="font-bold text-sm">{selectedSlot}</p>
+                  </div>
+                </div>
+              </motion.div>
+
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 1.5 }}
+                className="pt-10"
+              >
+                <div className="flex items-center justify-center gap-2 text-white/60">
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span className="text-xs font-bold uppercase tracking-widest">Redirecting to Live Track</span>
+                </div>
+              </motion.div>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -1488,7 +1869,7 @@ export default function App() {
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Price (e.g. $85/hr)</label>
+                      <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Price (e.g. ₹500/hr)</label>
                       <input 
                         name="price"
                         defaultValue={mechanics.find(m => m.id === user.uid)?.price}
@@ -1557,13 +1938,15 @@ export default function App() {
                       <div className="flex-1">
                         <div className="flex items-center justify-between mb-2">
                           <div className="font-semibold text-gray-900 text-lg">Service Request</div>
-                          <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${
                             booking.status === 'en_route' ? 'bg-blue-100 text-blue-800' : 
                             booking.status === 'arrived' ? 'bg-purple-100 text-purple-800' :
+                            booking.bookingType === 'scheduled' && booking.status === 'active' ? 'bg-indigo-100 text-indigo-800' :
                             'bg-yellow-100 text-yellow-800'
                           }`}>
                             {booking.status === 'en_route' ? 'En Route' : 
-                             booking.status === 'arrived' ? 'Arrived' : 'Pending Acceptance'}
+                             booking.status === 'arrived' ? 'Arrived' : 
+                             booking.bookingType === 'scheduled' && booking.status === 'active' ? 'Scheduled' : 'Pending Acceptance'}
                           </div>
                         </div>
                         
@@ -1600,11 +1983,9 @@ export default function App() {
                               {booking.bookingType === 'emergency' ? <AlertTriangle className="w-3 h-3 mr-1" /> : <Calendar className="w-3 h-3 mr-1" />}
                               {booking.bookingType || 'Standard'}
                             </div>
-                            {booking.bookingType === 'scheduled' && (
-                              <div className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-gray-100 text-gray-700">
-                                <Clock className="w-3 h-3 mr-1" /> {booking.scheduledDate} @ {booking.scheduledTime}
-                              </div>
-                            )}
+                            <div className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-gray-100 text-gray-700">
+                              <Clock className="w-3 h-3 mr-1" /> {booking.bookingType === 'scheduled' ? `${booking.scheduledDate} @ ${booking.scheduledTime}` : `Requested: ${new Date(booking.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                            </div>
                           </div>
 
                           <div className="border-t border-gray-200 pt-3 mt-3">
@@ -1691,7 +2072,7 @@ export default function App() {
                       </div>
                       <div className="text-right">
                         <div className="text-xs font-bold text-green-600">Completed</div>
-                        <div className="text-[10px] text-gray-400">{booking.mechanicPrice}</div>
+                        <div className="text-[10px] text-gray-400">{formatDisplayPrice(booking.mechanicPrice)}</div>
                       </div>
                     </div>
                   ))}
@@ -1831,11 +2212,31 @@ export default function App() {
               <MapUpdater bounds={L.latLngBounds(filteredMechanics.map(m => m.location))} />
             )}
 
-            {/* Live Tracking Marker */}
+            {/* Live Tracking Marker & Route */}
             {bookingState === 'tracking' && liveLocation && (
               <>
                 <Marker position={liveLocation} icon={getMechanicIcon(selectedMechanic?.category)} />
+                <Polyline positions={[userLocation, liveLocation]} color="#ef4444" weight={3} dashArray="10, 10" />
                 <MapUpdater center={liveLocation} />
+              </>
+            )}
+
+            {/* Mechanic's Customer Marker */}
+            {userRole === 'mechanic' && mechanicBookings.length > 0 && (
+              <>
+                {mechanicBookings.filter(b => ['active', 'en_route', 'arrived'].includes(b.status)).map(booking => (
+                  <Marker 
+                    key={booking.id} 
+                    position={booking.location} 
+                    icon={userIcon}
+                  >
+                    <Popup>
+                      <div className="font-bold">{booking.userName || 'Customer'}</div>
+                      <div className="text-xs">{booking.vehicleInfo}</div>
+                      <div className="text-xs text-red-500 font-bold mt-1 uppercase">{booking.bookingType} REQUEST</div>
+                    </Popup>
+                  </Marker>
+                ))}
               </>
             )}
 
@@ -1879,7 +2280,7 @@ export default function App() {
               <button 
                 onClick={() => {
                   setShowBookingWizard(true);
-                  setWizardStep(1);
+                  setBookingWizardStep(1);
                   setBookingType('scheduled');
                 }}
                 className="bg-white text-gray-900 border border-gray-200 px-5 py-4 rounded-full shadow-xl flex items-center gap-2 font-bold text-sm transition-transform hover:scale-105 active:scale-95 whitespace-nowrap"
@@ -1890,7 +2291,7 @@ export default function App() {
               <button 
                 onClick={() => {
                   setShowBookingWizard(true);
-                  setWizardStep(1);
+                  setBookingWizardStep(1);
                   setBookingType('emergency');
                 }}
                 className="bg-red-600 hover:bg-red-700 text-white px-5 py-4 rounded-full shadow-2xl shadow-red-600/40 flex items-center gap-2 font-bold text-sm transition-transform hover:scale-105 active:scale-95 whitespace-nowrap"
@@ -2050,7 +2451,7 @@ export default function App() {
                       </div>
                       <div className="w-px h-8 bg-gray-200" />
                       <div className="flex flex-col items-center">
-                        <div className="font-bold text-gray-900">{selectedMechanic.price}</div>
+                        <div className="font-bold text-gray-900">{formatDisplayPrice(selectedMechanic.price)}</div>
                         <div className="text-xs text-gray-500">Rate</div>
                       </div>
                     </div>
@@ -2086,199 +2487,33 @@ export default function App() {
                     </a>
                   </div>
 
-                  {/* Booking Form */}
-                  <div className="space-y-4 mb-2">
-                    <h3 className="font-semibold text-gray-900">Service Details</h3>
-                    
-                    {/* Booking Type Toggle */}
-                    <div className="flex p-1 bg-gray-100 rounded-xl mb-4">
-                      <button
-                        onClick={() => setBookingType('emergency')}
-                        className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold transition-all ${bookingType === 'emergency' ? 'bg-red-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                      >
-                        <AlertTriangle className="w-4 h-4" /> Emergency
-                      </button>
-                      <button
-                        onClick={() => setBookingType('scheduled')}
-                        className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold transition-all ${bookingType === 'scheduled' ? 'bg-blue-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                      >
-                        <Calendar className="w-4 h-4" /> Scheduled
-                      </button>
+                  {/* Expert Badges */}
+                  <div className="flex flex-wrap gap-2 mb-6">
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-green-50 text-green-700 rounded-full text-xs font-bold ring-1 ring-green-100">
+                      <ShieldCheck className="w-3.5 h-3.5" /> Verified Profile
                     </div>
-
-                    {bookingType === 'scheduled' && (
-                      <div className="grid grid-cols-2 gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
-                        <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1 ml-1">Date</label>
-                          <input 
-                            type="date" 
-                            value={scheduledDate}
-                            onChange={(e) => setScheduledDate(e.target.value)}
-                            min={new Date().toISOString().split('T')[0]}
-                            className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1 ml-1">Time</label>
-                          <input 
-                            type="time" 
-                            value={scheduledTime}
-                            onChange={(e) => setScheduledTime(e.target.value)}
-                            className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
-                          />
-                        </div>
-                      </div>
-                    )}
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Vehicle Make & Model</label>
-                      <input 
-                        type="text" 
-                        value={vehicleInfo}
-                        onChange={(e) => setVehicleInfo(e.target.value)}
-                        placeholder="e.g. 2018 Toyota Camry"
-                        className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Type of Service</label>
-                      <select 
-                        value={serviceType}
-                        onChange={(e) => setServiceType(e.target.value)}
-                        className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all text-sm"
-                      >
-                        <option value="general_maintenance">General Maintenance (Oil change, tune-up)</option>
-                        <option value="emergency_repair">Emergency Repair (Breakdown, won't start)</option>
-                        <option value="part_replacement">Specific Part Replacement (Brakes, Battery, etc.)</option>
-                        <option value="diagnostics">Inspection / Diagnostics (Strange noises, check engine light)</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="block text-sm font-medium text-gray-700">Issue Description</label>
-                        <button 
-                          onClick={handleAiDiagnose}
-                          disabled={isDiagnosing || !issueDescription.trim() || !vehicleInfo.trim()}
-                          className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full transition-all ${
-                            isDiagnosing 
-                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-                              : (!issueDescription.trim() || !vehicleInfo.trim())
-                                ? 'bg-gray-50 text-gray-400 cursor-not-allowed'
-                                : 'bg-red-50 text-red-600 hover:bg-red-100'
-                          }`}
-                        >
-                          {isDiagnosing ? (
-                            <div className="w-3 h-3 border-2 border-red-500 border-t-transparent rounded-full animate-spin"></div>
-                          ) : (
-                            <Sparkles className="w-3 h-3" />
-                          )}
-                          AI Diagnose
-                        </button>
-                      </div>
-                      <textarea 
-                        value={issueDescription}
-                        onChange={(e) => setIssueDescription(e.target.value)}
-                        placeholder="Describe the problem (e.g. Flat tire, won't start)"
-                        rows={3}
-                        className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all resize-none"
-                      />
-                    </div>
-
-                    {/* AI Diagnosis Result */}
-                    <AnimatePresence>
-                      {aiDiagnosis && (
-                        <motion.div 
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className="overflow-hidden"
-                        >
-                          <div className="bg-red-50/50 border border-red-100 rounded-2xl p-4 mt-2">
-                            <div className="flex items-center gap-2 text-red-700 font-bold text-xs uppercase tracking-wider mb-3">
-                              <Sparkles className="w-4 h-4" />
-                              AI Preliminary Diagnosis
-                            </div>
-                            
-                            <div className="space-y-3">
-                              <div>
-                                <p className="text-sm text-gray-800 leading-relaxed">
-                                  {aiDiagnosis.diagnosis}
-                                </p>
-                              </div>
-                              
-                              <div className="flex flex-wrap gap-2">
-                                <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-bold uppercase ${
-                                  aiDiagnosis.severity === 'high' ? 'bg-red-100 text-red-700' :
-                                  aiDiagnosis.severity === 'medium' ? 'bg-orange-100 text-orange-700' :
-                                  'bg-green-100 text-green-700'
-                                }`}>
-                                  <AlertTriangle className="w-3 h-3" />
-                                  Severity: {aiDiagnosis.severity}
-                                </div>
-                                <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-blue-100 text-blue-700 text-[10px] font-bold uppercase">
-                                  <DollarSign className="w-3 h-3" />
-                                  Est. Cost: {aiDiagnosis.estimatedCost}
-                                </div>
-                              </div>
-
-                              <div className="bg-white/50 rounded-xl p-3 border border-red-100/50">
-                                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Recommended Next Steps</p>
-                                <ul className="space-y-1.5">
-                                  {aiDiagnosis.nextSteps.map((step, i) => (
-                                    <li key={i} className="flex items-start gap-2 text-xs text-gray-700">
-                                      <CheckCircle2 className="w-3.5 h-3.5 text-red-500 mt-0.5 shrink-0" />
-                                      {step}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            </div>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Your Phone Number</label>
-                      <input 
-                        type="tel" 
-                        value={userPhone}
-                        onChange={(e) => setUserPhone(e.target.value)}
-                        placeholder="e.g. +1 555-0198"
-                        className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
-                      />
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-full text-xs font-bold ring-1 ring-blue-100">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Expert Rated
                     </div>
                   </div>
                 </div>
 
-                <div className="p-4 border-t border-gray-100 bg-white">
+                <div className="p-4 border-t border-gray-100 bg-white space-y-3">
+                  <button 
+                    onClick={() => setShowAiDiagnosticTool(true)}
+                    className="w-full font-bold py-4 bg-gray-100 text-gray-900 rounded-xl shadow-sm active:scale-95 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Sparkles className="w-5 h-5 text-red-500" />
+                    AI DIAGNOSIS TOOL
+                  </button>
                     <button 
-                      onClick={handleBook}
-                      disabled={
-                        selectedMechanic.isAvailable === false || 
-                        !vehicleInfo.trim() || 
-                        !issueDescription.trim() || 
-                        !userPhone.trim() ||
-                        (bookingType === 'scheduled' && (!scheduledDate || !scheduledTime))
-                      }
-                      className={`w-full font-semibold py-4 rounded-xl shadow-lg transition-all active:scale-[0.98] ${
-                        selectedMechanic.isAvailable !== false && 
-                        vehicleInfo.trim() && 
-                        issueDescription.trim() && 
-                        userPhone.trim() &&
-                        (bookingType === 'emergency' || (scheduledDate && scheduledTime))
-                          ? (bookingType === 'emergency' ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-500/30' : 'bg-blue-500 hover:bg-blue-600 text-white shadow-blue-500/30')
-                          : 'bg-gray-300 text-gray-500 cursor-not-allowed shadow-none'
-                      }`}
+                      onClick={() => {
+                        setShowBookingWizard(true);
+                        setBookingWizardStep(1);
+                      }}
+                      className="w-full font-bold py-4 bg-red-600 text-white rounded-xl shadow-lg active:scale-95 transition-all"
                     >
-                      {selectedMechanic.isAvailable === false 
-                        ? 'Currently Unavailable' 
-                        : (!vehicleInfo.trim() || !issueDescription.trim() || !userPhone.trim() 
-                          ? 'Fill details to request' 
-                          : (bookingType === 'scheduled' && (!scheduledDate || !scheduledTime) 
-                            ? 'Select date & time' 
-                            : (bookingType === 'emergency' ? 'Request Emergency Service' : 'Schedule Service')))}
+                      BOOK THIS EXPERT
                     </button>
                   </div>
               </motion.div>
@@ -2292,9 +2527,21 @@ export default function App() {
                 animate={{ opacity: 1, scale: 1 }}
                 className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-white"
               >
-                <div className="w-16 h-16 border-4 border-red-100 border-t-red-500 rounded-full animate-spin mb-6" />
+                <div className="relative mb-6">
+                  <div className="w-16 h-16 border-4 border-red-100 border-t-red-500 rounded-full animate-spin" />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Clock className="w-6 h-6 text-red-500 animate-pulse" />
+                  </div>
+                </div>
                 <h2 className="text-xl font-bold text-gray-900 mb-2">Confirming Request...</h2>
-                <p className="text-gray-500">Contacting {selectedMechanic?.name} to accept your service request.</p>
+                <p className="text-gray-500 mb-8">Contacting {selectedMechanic?.name} to accept your service request.</p>
+                
+                <button 
+                  onClick={handleCancel}
+                  className="px-6 py-2 border border-gray-200 text-gray-500 rounded-full hover:bg-gray-50 transition-colors text-sm font-bold uppercase tracking-wider"
+                >
+                  Cancel Request
+                </button>
               </motion.div>
             )}
 
@@ -2322,7 +2569,7 @@ export default function App() {
                       <div className="text-red-100 text-sm flex items-center gap-3 mt-1">
                         <span className="flex items-center"><Navigation className="w-3 h-3 mr-1" /> {mechanicStatus === 'arrived' || mechanicStatus === 'payment_pending' ? '0 km' : selectedMechanic.distance}</span>
                         <span className="flex items-center"><Star className="w-3 h-3 mr-1" /> {selectedMechanic.rating}</span>
-                        <span className="font-medium">{selectedMechanic.price}</span>
+                        <span className="font-medium">{formatDisplayPrice(selectedMechanic.price)}</span>
                       </div>
                     </div>
                     <div className="flex gap-2 ml-auto">
@@ -2369,7 +2616,7 @@ export default function App() {
                         : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
                     }`}
                   >
-                    {mechanicStatus === 'arrived' || mechanicStatus === 'payment_pending' ? `Pay Mechanic (${selectedMechanic.price})` : 'Cancel Request'}
+                    {mechanicStatus === 'arrived' || mechanicStatus === 'payment_pending' ? `Pay Mechanic (${formatDisplayPrice(selectedMechanic.price)})` : 'Cancel Request'}
                   </button>
                 </div>
               </motion.div>
@@ -2511,8 +2758,17 @@ export default function App() {
                       </div>
                     </div>
                     <div className="flex items-center justify-between pt-3 border-t border-gray-50">
-                      <div className="text-sm font-bold text-red-600">{mech.price}</div>
-                      <button className="text-xs font-bold text-gray-400 hover:text-red-500 uppercase tracking-wider">View on Map</button>
+                      <div className="text-lg font-bold text-red-600">{formatDisplayPrice(mech.price)}</div>
+                      <button 
+                        className="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-2 px-4 rounded-xl transition-all shadow-md shadow-red-500/20 active:scale-95"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedMechanic(mech);
+                          setCurrentTab('map');
+                        }}
+                      >
+                        Book Now
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -2565,20 +2821,20 @@ export default function App() {
                             <div className="flex-1">
                               <div className="grid grid-cols-2 gap-4 mb-3">
                                 <div>
-                                  <div className="text-sm text-gray-500 flex items-center gap-1"><Clock className="w-4 h-4" /> Date</div>
+                                  <div className="text-sm text-gray-500 flex items-center gap-1"><Clock className="w-4 h-4" /> {booking.bookingType === 'scheduled' ? 'Scheduled For' : 'Requested At'}</div>
                                   <div className="font-medium text-gray-900">
                                     {booking.bookingType === 'scheduled' ? booking.scheduledDate : new Date(booking.date).toLocaleDateString()}
                                   </div>
                                   <div className="text-sm text-gray-500">
-                                    {booking.bookingType === 'scheduled' ? booking.scheduledTime : new Date(booking.date).toLocaleTimeString()}
+                                    {booking.bookingType === 'scheduled' ? booking.scheduledTime : new Date(booking.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                   </div>
                                 </div>
                                 <div>
                                   <div className="text-sm text-gray-500 flex items-center gap-1"><ShieldCheck className="w-4 h-4" /> Status</div>
-                                  <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium mt-1 ${
+                                  <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold mt-1 ${
                                     booking.status === 'active' ? 'bg-yellow-100 text-yellow-800' : 'bg-blue-100 text-blue-800'
                                   }`}>
-                                    {booking.status.charAt(0).toUpperCase() + booking.status.slice(1)}
+                                    {booking.bookingType === 'scheduled' && booking.status === 'active' ? 'Scheduled' : (booking.status.charAt(0).toUpperCase() + booking.status.slice(1))}
                                   </div>
                                 </div>
                               </div>

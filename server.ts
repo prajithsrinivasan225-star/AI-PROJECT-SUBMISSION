@@ -4,8 +4,10 @@ import { createServer } from 'http';
 import path from 'path';
 import Stripe from 'stripe';
 import { Server } from 'socket.io';
+import Razorpay from 'razorpay';
 
 let stripeClient: Stripe | null = null;
+let razorpayClient: Razorpay | null = null;
 
 export function getStripe(): Stripe {
   if (!stripeClient) {
@@ -18,7 +20,22 @@ export function getStripe(): Stripe {
   return stripeClient;
 }
 
-const USER_LOCATION = [40.7128, -74.0060];
+export function getRazorpay(): Razorpay {
+  if (!razorpayClient) {
+    const keyId = process.env.RAZORPAY_KEY_ID;
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+    if (!keyId || !keySecret) {
+      throw new Error('RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET environment variables are required. Please set them in the AI Studio settings.');
+    }
+    razorpayClient = new Razorpay({
+      key_id: keyId,
+      key_secret: keySecret
+    });
+  }
+  return razorpayClient;
+}
+
+const USER_LOCATION = [13.3486, 80.1144]; // Kavaraipettai, Thiruvallur, Tamil Nadu
 
 async function startServer() {
   const app = express();
@@ -52,12 +69,30 @@ async function startServer() {
   app.use(express.json());
 
   // --- API Routes ---
+  app.post('/api/create-razorpay-order', async (req, res) => {
+    try {
+      const razorpay = getRazorpay();
+      const { amount, receipt } = req.body;
+      
+      const options = {
+        amount: amount, // amount in smallest currency unit
+        currency: "INR",
+        receipt: receipt,
+      };
+      
+      const order = await razorpay.orders.create(options);
+      res.json(order);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.post('/api/create-checkout-session', async (req, res) => {
     try {
       const stripe = getStripe();
       const { bookingId, mechanicName, priceString } = req.body;
       
-      let amount = 8500; // default $85.00
+      let amount = 50000; // default ₹500.00
       const match = priceString?.match(/\d+/);
       if (match) {
         amount = parseInt(match[0], 10) * 100;
@@ -68,7 +103,7 @@ async function startServer() {
         line_items: [
           {
             price_data: {
-              currency: 'usd',
+              currency: 'inr',
               product_data: {
                 name: `Mechanic Service by ${mechanicName}`,
                 description: `Booking ID: ${bookingId}`,
