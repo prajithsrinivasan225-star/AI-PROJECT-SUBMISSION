@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
 import L from 'leaflet';
-import { Wrench, Star, Phone, MapPin, Clock, ArrowLeft, CheckCircle2, Navigation, ShieldCheck, History, Map as MapIcon, LogOut, MessageCircle, Send, X, AlertTriangle, Calendar, Users, Car, Bike, Sparkles, Bot, User as UserIcon, IndianRupee, Search, Zap, Disc, Lock, Truck, ShieldAlert, Home, Building } from 'lucide-react';
+import { Wrench, Star, Phone, MapPin, Clock, ArrowLeft, CheckCircle2, Navigation, ShieldCheck, History, Map as MapIcon, LogOut, MessageCircle, Send, X, AlertTriangle, Calendar, Users, Car, Bike, Sparkles, Bot, User as UserIcon, IndianRupee, Search, Zap, Disc, Lock, Truck, ShieldAlert, Home, Building, CreditCard } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { auth, db, signInWithGoogle, logOut } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
