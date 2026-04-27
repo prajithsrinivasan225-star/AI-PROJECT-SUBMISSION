@@ -81,7 +81,7 @@ async function startServer() {
       };
       
       const order = await razorpay.orders.create(options);
-      res.json(order);
+      res.json({ ...order, keyId: process.env.RAZORPAY_KEY_ID });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

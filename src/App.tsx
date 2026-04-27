@@ -732,7 +732,7 @@ export default function App() {
         }
 
         const options = {
-          key: import.meta.env.VITE_RAZORPAY_KEY_ID || 'rzp_test_mock_key', // Ensure this matches backend if present
+          key: order.keyId || import.meta.env.VITE_RAZORPAY_KEY_ID || 'rzp_test_mock_key',
           amount: order.amount,
           currency: order.currency,
           name: "MechFinder Services",
